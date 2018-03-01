@@ -104,25 +104,28 @@ public:
 public:
 	void push(ShareAVBuffer<T>* sharepkt);
 	ShareAVBuffer<T>* pop();
-	ShareAVBuffer<T>* front();
-	ShareAVBuffer<T>* back();
-	int64_t GetBusySize();
+    int64_t GetBusySize();
 	void clear();
 private:
 	std::queue<ShareAVBuffer<T>*> packetqueue;
     pthread_mutex_t mutex;
+    pthread_cond_t cond_not_emty;
+    int state;
 };
 
 template <class T>
 ShareAVBufferQueue<T>::ShareAVBufferQueue()
 {
+    state = 0;
     pthread_mutex_init(&mutex, NULL);
+    pthread_cond_init(&cond_not_emty, NULL);
 }
 
 template <class T>
 ShareAVBufferQueue<T>::~ShareAVBufferQueue()
 {
     pthread_mutex_destroy(&mutex);
+    pthread_cond_destroy(&cond_not_emty);
 }
 
 template <class T>
@@ -138,6 +141,8 @@ void ShareAVBufferQueue<T>::clear()
 			free_sharebuf(share);
 		}
 	}
+    state = 1;
+    pthread_cond_signal(&cond_not_emty);
     pthread_mutex_unlock(&mutex);
 }
 
@@ -155,6 +160,7 @@ void ShareAVBufferQueue<T>::push(ShareAVBuffer<T>* sharepkt)
 {	
     pthread_mutex_lock(&mutex);
 	packetqueue.push(sharepkt);
+    pthread_cond_signal(&cond_not_emty);
     pthread_mutex_unlock(&mutex);
 }
 
@@ -163,37 +169,19 @@ ShareAVBuffer<T>* ShareAVBufferQueue<T>::pop()
 {
     pthread_mutex_lock(&mutex);
 	ShareAVBuffer<T>* share = NULL;
-	if (!packetqueue.empty())
+    while (packetqueue.empty())
 	{
-		share = packetqueue.front();
-		packetqueue.pop();
-	}
-    pthread_mutex_unlock(&mutex);
-	return share;
-}
+        if (state == 1)
+            break;
 
-template <class T>
-ShareAVBuffer<T>* ShareAVBufferQueue<T>::front()
-{
-    pthread_mutex_lock(&mutex);
-	ShareAVBuffer<T>* share = NULL;
-	if (!packetqueue.empty())
-	{
-		share = packetqueue.front();
+        pthread_cond_wait(&cond_not_emty, &mutex);
 	}
-    pthread_mutex_unlock(&mutex);
-	return share;
-}
 
-template <class T>
-ShareAVBuffer<T>* ShareAVBufferQueue<T>::back()
-{
-    pthread_mutex_lock(&mutex);
-	ShareAVBuffer<T>* share = NULL;
-	if (!packetqueue.empty())
-	{
-		share = packetqueue.back();
-	}
+    if (!packetqueue.empty())
+    {
+        share = packetqueue.front();
+        packetqueue.pop();
+    }
     pthread_mutex_unlock(&mutex);
 	return share;
 }
